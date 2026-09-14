@@ -1,0 +1,18 @@
+# Binaries
+/open-llm
+/out/
+*.exe
+
+# Env & secrets
+.env
+*.local
+
+# Go
+*.test
+*.out
+/vendor/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store

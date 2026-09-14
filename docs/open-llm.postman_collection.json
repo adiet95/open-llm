@@ -1,0 +1,136 @@
+{
+  "info": {
+    "name": "open-llm",
+    "description": "HTTP service for chatting with an open-source LLM on Groq (OpenAI-compatible).\n\nEndpoints:\n- GET  /          service info\n- GET  /health    liveness probe\n- POST /v1/chat        blocking chat completion (JSON)\n- POST /v1/chat/stream streamed completion (chunked text)\n\nSet the `baseUrl` variable (defaults to http://localhost:8080). The service reads its Groq API key server-side from the environment, so no auth header is needed from the client.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Service info",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": ["{{baseUrl}}"],
+          "path": [""]
+        },
+        "description": "Returns service name, provider, model, and the list of endpoints."
+      },
+      "response": []
+    },
+    {
+      "name": "Health check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        },
+        "description": "Liveness probe. Returns {\"status\":\"ok\"}. Used by Render health checks."
+      },
+      "response": []
+    },
+    {
+      "name": "Chat (blocking)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are concise.\"},\n    {\"role\": \"user\", \"content\": \"Explain what a token is in one sentence.\"}\n  ],\n  \"temperature\": 0.7,\n  \"max_tokens\": 256\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/chat",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "chat"]
+        },
+        "description": "Blocking chat completion. Returns a single JSON object with `content`, `model`, and `usage`.\n\nOptional fields: `model` (override the server default), `temperature`, `max_tokens`."
+      },
+      "response": []
+    },
+    {
+      "name": "Chat (blocking) - model override",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"Give me three uses for Go's context package.\"}\n  ],\n  \"model\": \"openai/gpt-oss-120b\",\n  \"temperature\": 0.3\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/chat",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "chat"]
+        },
+        "description": "Same endpoint, overriding the model per-request with the `model` field."
+      },
+      "response": []
+    },
+    {
+      "name": "Chat (streaming)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"Write a haiku about Go.\"}\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/chat/stream",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "chat", "stream"]
+        },
+        "description": "Streamed completion. The response is plain text (text/plain), sent as chunks as the model generates tokens. Postman shows the full body once the stream ends; use curl -N to watch tokens arrive live."
+      },
+      "response": []
+    },
+    {
+      "name": "Chat - validation error (empty messages)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messages\": []\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/chat",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "chat"]
+        },
+        "description": "Demonstrates the 400 response: `messages` must not be empty. Returns {\"error\":\"messages must not be empty\"}."
+      },
+      "response": []
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploy: push to GitHub, then on Render → New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: open-llm
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: LLM_MODEL
+        value: openai/gpt-oss-20b
+      # Set this in the Render dashboard (Environment tab) — never commit it.
+      # Get a free Groq key at https://console.groq.com/keys
+      - key: LLM_API_KEY
+        sync: false
