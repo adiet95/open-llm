@@ -9,22 +9,24 @@ import (
 
 	"github.com/adiet95/open-llm/internal/agent"
 	"github.com/adiet95/open-llm/internal/llm"
+	"github.com/adiet95/open-llm/internal/orchestrator"
 	"github.com/adiet95/open-llm/internal/rag"
 )
 
 // Handler holds dependencies shared across HTTP endpoints.
 type Handler struct {
-	client   *llm.Client
-	rag      *rag.Service
-	agent    *agent.Agent
-	provider string
-	model    string
-	log      *slog.Logger
+	client       *llm.Client
+	rag          *rag.Service
+	agent        *agent.Agent
+	orchestrator *orchestrator.Orchestrator
+	provider     string
+	model        string
+	log          *slog.Logger
 }
 
-// NewHandler builds a Handler. ragSvc and agentSvc may be nil if disabled.
-func NewHandler(client *llm.Client, ragSvc *rag.Service, agentSvc *agent.Agent, provider, model string, log *slog.Logger) *Handler {
-	return &Handler{client: client, rag: ragSvc, agent: agentSvc, provider: provider, model: model, log: log}
+// NewHandler builds a Handler. ragSvc, agentSvc and orchSvc may be nil if disabled.
+func NewHandler(client *llm.Client, ragSvc *rag.Service, agentSvc *agent.Agent, orchSvc *orchestrator.Orchestrator, provider, model string, log *slog.Logger) *Handler {
+	return &Handler{client: client, rag: ragSvc, agent: agentSvc, orchestrator: orchSvc, provider: provider, model: model, log: log}
 }
 
 // Routes returns the configured mux for the service, wrapped in metrics.
@@ -38,6 +40,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/rag/ingest", h.ragIngest)
 	mux.HandleFunc("POST /v1/rag/query", h.ragQuery)
 	mux.HandleFunc("POST /v1/agent", h.runAgent)
+	mux.HandleFunc("POST /v1/research", h.runResearch)
 	return withMetrics(h.log, mux)
 }
 
@@ -61,13 +64,17 @@ func (h *Handler) root(w http.ResponseWriter, _ *http.Request) {
 	if h.agent != nil {
 		endpoints = append(endpoints, "POST /v1/agent")
 	}
+	if h.orchestrator != nil {
+		endpoints = append(endpoints, "POST /v1/research")
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"service":       "open-llm",
-		"provider":      h.provider,
-		"model":         h.model,
-		"rag_enabled":   h.rag != nil,
-		"agent_enabled": h.agent != nil,
-		"endpoints":     endpoints,
+		"service":              "open-llm",
+		"provider":             h.provider,
+		"model":                h.model,
+		"rag_enabled":          h.rag != nil,
+		"agent_enabled":        h.agent != nil,
+		"orchestrator_enabled": h.orchestrator != nil,
+		"endpoints":            endpoints,
 	})
 }
 
@@ -253,6 +260,34 @@ func (h *Handler) runAgent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.log.Error("agent run failed", "err", err)
 		writeError(w, http.StatusBadGateway, "agent run failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// runResearch executes the multi-agent research pipeline (Phase 5):
+// planner -> parallel workers -> synthesizer.
+func (h *Handler) runResearch(w http.ResponseWriter, r *http.Request) {
+	if h.orchestrator == nil {
+		writeError(w, http.StatusNotFound, "orchestrator is not enabled")
+		return
+	}
+	var body struct {
+		Goal string `json:"goal"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Goal == "" {
+		writeError(w, http.StatusBadRequest, "'goal' is required")
+		return
+	}
+
+	res, err := h.orchestrator.Run(r.Context(), body.Goal)
+	if err != nil {
+		h.log.Error("research run failed", "err", err)
+		writeError(w, http.StatusBadGateway, "research run failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, res)

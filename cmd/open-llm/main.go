@@ -22,6 +22,7 @@ import (
 	"github.com/adiet95/open-llm/internal/config"
 	"github.com/adiet95/open-llm/internal/httpapi"
 	"github.com/adiet95/open-llm/internal/llm"
+	"github.com/adiet95/open-llm/internal/orchestrator"
 	"github.com/adiet95/open-llm/internal/rag"
 )
 
@@ -90,7 +91,12 @@ func run(log *slog.Logger) error {
 			knowledgeLookupTool(ragSvc))
 	}
 
-	handler := httpapi.NewHandler(client, ragSvc, agentSvc, string(cfg.Provider), cfg.Model, log)
+	// Build the multi-agent research orchestrator (Phase 5): planner ->
+	// parallel workers -> synthesizer, reusing the same llm client. maxTasks
+	// and worker concurrency are bounded as guardrails against fan-out.
+	orchSvc := orchestrator.New(client, 5, 3)
+
+	handler := httpapi.NewHandler(client, ragSvc, agentSvc, orchSvc, string(cfg.Provider), cfg.Model, log)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
