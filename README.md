@@ -1,36 +1,41 @@
 # open-llm
 
-A small HTTP service (Go 1.27, standard library only) that talks to an
-**open-source LLM** on **[Groq](https://groq.com)** through Groq's
-**OpenAI-compatible** chat-completions API.
+A small HTTP service (**Go 1.27, standard library only**) for building on
+**open-source LLMs** via **[Groq](https://groq.com)**'s OpenAI-compatible API.
+It grows through an LLM-engineering learning path — each phase is a real,
+tested feature:
 
-Built as **Phase 0** of an LLM-engineering learning path: it makes the
-fundamentals concrete — how a chat API call is shaped (messages, model,
-temperature, max_tokens), the difference between a blocking response and a
-streamed one, and how to run the same service locally and in the cloud by
-changing environment variables only.
+| Phase | Feature | Endpoint(s) |
+|-------|---------|-------------|
+| **0** | LLM fundamentals — chat, streaming | `/v1/chat`, `/v1/chat/stream` |
+| **1** | Structured output (JSON Schema) | `/v1/extract` |
+| **2** | RAG — chunk + embed + retrieve, with citations | `/v1/rag/ingest`, `/v1/rag/query` |
+| **3** | Tool-calling agent (ReAct loop) | `/v1/agent` |
+| **4** | Production — eval harness + request metrics | `internal/eval`, metrics middleware |
 
 - **LLM provider:** [Groq](https://groq.com) — free tier, fast, OpenAI-compatible
-- **Deploy:** one-click to [Render](https://render.com) with the included `render.yaml`
+- **Embeddings (RAG):** local [Ollama](https://ollama.com) by default (free), or any OpenAI-compatible embeddings endpoint
+- **Deploy:** one-click to [Render](https://render.com) via `render.yaml`
 
-Reference for the API shape:
-[OpenAI — Text generation & prompting](https://platform.openai.com/docs/guides/text-generation).
-
-> **Groq, not Grok.** This service uses **Groq** (groq.com), an inference
-> provider with a free tier. It is unrelated to xAI's **Grok** model.
+> **Groq, not Grok.** This uses **Groq** (groq.com), an inference provider with a
+> free tier — unrelated to xAI's **Grok** model.
 
 ---
 
 ## Project layout
 
 ```
-cmd/open-llm/main.go        # entrypoint + graceful shutdown
-internal/config/            # env-based configuration (no hard-coded secrets)
-internal/llm/               # OpenAI-compatible client: Chat + ChatStream (+ tests)
-internal/httpapi/           # HTTP handlers: /health, /v1/chat, /v1/chat/stream
-Dockerfile                  # multi-stage, distroless, static binary
-render.yaml                 # Render Blueprint (free web service)
-.env.example                # every env var, documented
+cmd/open-llm/main.go     # entrypoint, graceful shutdown, agent + tools wiring
+internal/config/         # env-based configuration (no hard-coded secrets) + .env loader
+internal/llm/            # OpenAI-compatible client: Chat, ChatStream, Extract (+ tool types)
+internal/rag/            # RAG pipeline: chunk, embed, cosine vector store, service
+internal/agent/          # ReAct tool-calling loop with guardrails (allow-list, step limit)
+internal/eval/           # evaluation harness: run a labelled dataset, score, report accuracy
+internal/httpapi/        # HTTP handlers + metrics middleware
+docs/                    # Postman collection + curl examples
+Dockerfile               # multi-stage, distroless, static binary
+render.yaml              # Render Blueprint (free web service)
+.env.example             # every env var, documented
 ```
 
 ---
@@ -38,7 +43,8 @@ render.yaml                 # Render Blueprint (free web service)
 ## Run locally
 
 1. Get a free Groq API key at <https://console.groq.com/keys>.
-2. Run the service (PowerShell on Windows):
+2. (For RAG only) install embeddings: `ollama pull nomic-embed-text`.
+3. Run (PowerShell on Windows):
    ```powershell
    $env:LLM_API_KEY="gsk_..."
    go run ./cmd/open-llm
@@ -46,69 +52,119 @@ render.yaml                 # Render Blueprint (free web service)
    Defaults: base URL `https://api.groq.com/openai/v1`, model
    `openai/gpt-oss-20b`, port `8080`.
 
-3. Call it:
-   ```bash
-   curl -s localhost:8080/v1/chat -d '{
-     "messages": [{"role": "user", "content": "Explain what a token is in one sentence."}]
-   }'
-   ```
-   Streaming (watch tokens arrive):
-   ```bash
-   curl -N localhost:8080/v1/chat/stream -d '{
-     "messages": [{"role": "user", "content": "Write a haiku about Go."}]
-   }'
-   ```
+Full runnable examples (bash + PowerShell) are in
+[`docs/curl-examples.md`](docs/curl-examples.md); a Postman collection is in
+[`docs/open-llm.postman_collection.json`](docs/open-llm.postman_collection.json).
+
+Quick check:
+```bash
+curl -s localhost:8080/v1/chat -d '{"messages":[{"role":"user","content":"Explain what a token is in one sentence."}]}'
+```
 
 ---
 
 ## API
 
-| Method & path        | Description                              |
-|----------------------|------------------------------------------|
-| `GET /health`        | Liveness probe → `{"status":"ok"}`       |
-| `GET /`              | Service info (provider, model, endpoints)|
-| `POST /v1/chat`      | Blocking chat completion → JSON          |
-| `POST /v1/chat/stream` | Streamed completion (chunked text)     |
+| Method & path | Description |
+|---|---|
+| `GET /health` | Liveness probe → `{"status":"ok"}` |
+| `GET /` | Service info (provider, model, feature flags, endpoints) |
+| `POST /v1/chat` | Blocking chat completion → JSON |
+| `POST /v1/chat/stream` | Streamed completion (chunked text) |
+| `POST /v1/extract` | **Structured output** — text → JSON constrained by a JSON Schema |
+| `POST /v1/rag/ingest` | **RAG** — add a document: chunk → embed → store |
+| `POST /v1/rag/query` | **RAG** — answer a question grounded in ingested docs, with citations |
+| `POST /v1/agent` | **Tool-calling agent** — ReAct loop over `calculator` + `knowledge_lookup` |
 
-**Request body** (both chat endpoints):
+> `/v1/extract` and `/v1/agent` need a Groq model that supports structured
+> outputs / tool calling — set `LLM_MODEL` if the default rejects them.
+> `/v1/rag/*` need embeddings (Ollama by default).
+
+### Examples
+
+**Chat**
 ```json
-{
-  "messages": [
-    {"role": "system", "content": "You are concise."},
-    {"role": "user", "content": "Hello"}
-  ],
-  "model": "optional-override",
-  "temperature": 0.7,
-  "max_tokens": 256
-}
+POST /v1/chat
+{ "messages": [{"role":"user","content":"Hello"}], "temperature": 0.7, "max_tokens": 256 }
+→ { "content": "...", "model": "openai/gpt-oss-20b", "usage": {...} }
 ```
 
-**`/v1/chat` response:**
+**Extract (Phase 1)** — valid JSON by construction, no regex/repair:
 ```json
-{ "content": "...", "model": "openai/gpt-oss-20b",
-  "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20} }
+POST /v1/extract
+{ "text": "Kirim 500 ribu ke Budi lewat BI-FAST",
+  "schema": {"type":"object","properties":{"amount":{"type":"integer"},"recipient":{"type":"string"},"method":{"type":"string"}},"required":["amount","recipient"]} }
+→ { "data": {"amount":500000,"recipient":"Budi","method":"BI-FAST"}, "model": ..., "usage": {...} }
+```
+
+**RAG (Phase 2)**
+```json
+POST /v1/rag/ingest
+{ "source": "kebijakan", "text": "Limit transfer QRIS harian adalah 20 juta rupiah..." }
+→ { "source": "kebijakan", "chunks": 1 }
+
+POST /v1/rag/query
+{ "question": "berapa limit transfer QRIS harian?" }
+→ { "answer": "... [kebijakan]", "sources": [{"source":"kebijakan","score":0.87,"excerpt":"..."}], "model": ..., "usage": {...} }
+```
+
+**Agent (Phase 3)** — the model calls tools and returns the steps:
+```json
+POST /v1/agent
+{ "task": "Berapa 240 dikali 3? Jelaskan singkat." }
+→ { "answer": "240 dikali 3 adalah 720.", "steps": [{"tool":"calculator","args":"{\"a\":240,\"b\":3,\"op\":\"*\"}","result":"720"}] }
 ```
 
 ---
 
 ## Configuration (environment variables)
 
+For local dev a `.env` file is loaded automatically (git-ignored); real OS env
+vars take precedence. In production (Render) values come from the platform.
+
+**LLM (Groq)**
 | Var | Default | Notes |
 |-----|---------|-------|
 | `LLM_API_KEY` | — | **required** — your Groq key (`gsk_...`) |
-| `LLM_BASE_URL` | `https://api.groq.com/openai/v1` | must include the `/v1` segment |
-| `LLM_MODEL` | `openai/gpt-oss-20b` | any Groq-hosted model (see console.groq.com/docs/models) |
+| `LLM_BASE_URL` | `https://api.groq.com/openai/v1` | must include `/v1` |
+| `LLM_MODEL` | `openai/gpt-oss-20b` | any Groq-hosted model; use a tool/JSON-capable one for `/v1/extract` & `/v1/agent` |
 | `PORT` | `8080` | injected by Render/most PaaS |
 | `LLM_REQUEST_TIMEOUT` | `60` | seconds, or a Go duration like `90s` |
 
-Secrets are **never** hard-coded — the key is read from the environment only.
+**RAG / embeddings**
+| Var | Default | Notes |
+|-----|---------|-------|
+| `EMBED_BASE_URL` | `http://localhost:11434/v1` | Groq has no embeddings; default is local Ollama |
+| `EMBED_API_KEY` | — | empty for local Ollama; set for a cloud embeddings endpoint |
+| `EMBED_MODEL` | `nomic-embed-text` | `ollama pull nomic-embed-text` first |
+| `VECTOR_STORE_PATH` | `data/vectorstore.json` | JSON-backed store (git-ignored) |
+| `RAG_CHUNK_SIZE` | `800` | characters per chunk |
+| `RAG_CHUNK_OVERLAP` | `150` | overlap between chunks |
+| `RAG_TOP_K` | `4` | chunks retrieved per query |
+
+Secrets are **never** hard-coded — keys are read from the environment only.
+
+---
+
+## Architecture notes
+
+- **Provider abstraction:** generation (Groq) and embeddings (Ollama/cloud) are
+  separate OpenAI-compatible clients — swap either via env, no code change.
+- **Vector store behind an interface:** `rag.Store` is a JSON-backed cosine index
+  today; swap in **pgvector** later without touching the pipeline.
+- **Agent guardrails:** only registered tools run (allow-list) and a hard step
+  limit (default 5) prevents runaway loops.
+- **Eval over exact-assert:** `internal/eval` scores a labelled dataset and
+  reports accuracy — the right way to test non-deterministic LLM output.
+- **Observability:** `withMetrics` logs method/path/status/latency per request;
+  `usage` (token counts) is returned by every completion.
 
 ---
 
 ## Test & build
 
 ```bash
-go test ./...        # unit tests (httptest — no real LLM call, no key needed)
+go test ./...   # httptest-based — no real LLM/embeddings call, no key needed
 go vet ./...
 go build ./...
 ```
@@ -118,25 +174,26 @@ go build ./...
 ## Deploy to Render (free)
 
 1. Push this repo to GitHub.
-2. Render dashboard → **New → Blueprint** → select this repo. It reads `render.yaml`.
-3. In the service's **Environment** tab, set `LLM_API_KEY` to your Groq key
-   (it's marked `sync: false`, so it is never stored in git).
-4. Deploy. Render builds the Dockerfile and gives you a public HTTPS URL.
-   Health checks hit `/health`.
+2. Render → **New → Blueprint** → select this repo (reads `render.yaml`).
+3. In **Environment**, set `LLM_API_KEY` (marked `sync: false`, never in git).
+   For RAG in the cloud, also set `EMBED_BASE_URL` + `EMBED_API_KEY` to a cloud
+   embeddings endpoint (a local Ollama is not reachable from Render).
+4. Deploy. Health checks hit `/health`.
 
-> Note: Render's free web service **sleeps when idle** and cold-starts on the
-> next request (a few seconds). Fine for a portfolio/demo.
+> Render's free web service **sleeps when idle** and cold-starts on the next
+> request. Fine for a portfolio/demo.
 
 ### Other platforms
-The `Dockerfile` is portable, so the same image runs on **Fly.io**
-(`fly launch`), **Google Cloud Run** (`gcloud run deploy --source .`), or
-**Railway**. Set the same env vars there.
+The `Dockerfile` is portable — same image on **Fly.io** (`fly launch`),
+**Google Cloud Run** (`gcloud run deploy --source .`), or **Railway**.
 
 ---
 
-## Roadmap (next learning phases)
+## Roadmap (next)
 
-- **Phase 1:** add a `/v1/extract` endpoint using **function calling / structured
-  outputs** (JSON schema) instead of free-text parsing.
-- **Phase 2:** add embeddings + `pgvector` for RAG.
-- **Phase 4:** add token/latency metrics, request logging, and an eval harness.
+- **pgvector** vector store (Supabase/Postgres) behind the existing `rag.Store`
+  interface — for larger corpora.
+- **File ingest** (PDF/markdown) for RAG.
+- **Guardrails** — prompt-injection detection + PII redaction (Phase 4).
+- **Multi-agent** orchestrator (planner/worker/synthesizer) — Phase 5, only when
+  a use-case truly needs independent roles.

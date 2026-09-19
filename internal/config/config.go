@@ -23,6 +23,16 @@ const (
 	defaultGroqBaseURL    = "https://api.groq.com/openai/v1"
 	defaultGroqModel      = "openai/gpt-oss-20b"
 	defaultRequestTimeout = 60 * time.Second
+
+	// RAG / embedding defaults. Groq has no embeddings endpoint, so embeddings
+	// default to a local Ollama server (free, no key). Any OpenAI-compatible
+	// embeddings endpoint works by overriding EMBED_BASE_URL / EMBED_API_KEY.
+	defaultEmbedBaseURL  = "http://localhost:11434/v1"
+	defaultEmbedModel    = "nomic-embed-text"
+	defaultVectorStore   = "data/vectorstore.json"
+	defaultChunkSize     = 800 // characters per chunk (approx; see rag.Chunk)
+	defaultChunkOverlap  = 150
+	defaultRetrieveTopK  = 4
 )
 
 // Config holds all runtime settings, resolved from the environment.
@@ -33,6 +43,15 @@ type Config struct {
 	APIKey         string
 	Model          string
 	RequestTimeout time.Duration
+
+	// RAG configuration.
+	EmbedBaseURL  string
+	EmbedAPIKey   string
+	EmbedModel    string
+	VectorStore   string
+	ChunkSize     int
+	ChunkOverlap  int
+	RetrieveTopK  int
 }
 
 // Load reads configuration from the environment and applies sensible defaults.
@@ -54,6 +73,14 @@ func Load() (*Config, error) {
 		Model:          getEnv("LLM_MODEL", defaultGroqModel),
 		APIKey:         os.Getenv("LLM_API_KEY"),
 		RequestTimeout: getDurationEnv("LLM_REQUEST_TIMEOUT", defaultRequestTimeout),
+
+		EmbedBaseURL: getEnv("EMBED_BASE_URL", defaultEmbedBaseURL),
+		EmbedAPIKey:  os.Getenv("EMBED_API_KEY"),
+		EmbedModel:   getEnv("EMBED_MODEL", defaultEmbedModel),
+		VectorStore:  getEnv("VECTOR_STORE_PATH", defaultVectorStore),
+		ChunkSize:    getIntEnv("RAG_CHUNK_SIZE", defaultChunkSize),
+		ChunkOverlap: getIntEnv("RAG_CHUNK_OVERLAP", defaultChunkOverlap),
+		RetrieveTopK: getIntEnv("RAG_TOP_K", defaultRetrieveTopK),
 	}
 
 	if cfg.APIKey == "" {
@@ -66,6 +93,17 @@ func Load() (*Config, error) {
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func getIntEnv(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return n
 	}
 	return fallback
 }

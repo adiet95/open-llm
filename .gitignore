@@ -12,6 +12,9 @@
 *.out
 /vendor/
 
+# RAG local vector store
+/data/
+
 # Editor / OS
 .idea/
 .vscode/

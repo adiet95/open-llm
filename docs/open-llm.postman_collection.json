@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "open-llm",
-    "description": "HTTP service for chatting with an open-source LLM on Groq (OpenAI-compatible).\n\nEndpoints:\n- GET  /          service info\n- GET  /health    liveness probe\n- POST /v1/chat        blocking chat completion (JSON)\n- POST /v1/chat/stream streamed completion (chunked text)\n\nSet the `baseUrl` variable (defaults to http://localhost:8080). The service reads its Groq API key server-side from the environment, so no auth header is needed from the client.",
+    "description": "HTTP service for open-source LLMs on Groq (OpenAI-compatible), with structured output, RAG, and a tool-calling agent.\n\nEndpoints:\n- GET  /                 service info (provider, model, enabled features, endpoints)\n- GET  /health           liveness probe\n- POST /v1/chat          blocking chat completion (JSON)\n- POST /v1/chat/stream   streamed completion (chunked text)\n- POST /v1/extract       structured output — text -> JSON constrained by a JSON Schema (Phase 1)\n- POST /v1/rag/ingest    add a document to the knowledge base: chunk -> embed -> store (Phase 2)\n- POST /v1/rag/query     answer a question grounded in the ingested docs, with citations (Phase 2)\n- POST /v1/agent         tool-calling agent loop (ReAct): calculator + knowledge_lookup (Phase 3)\n\nSet the `baseUrl` variable (defaults to http://localhost:8080). The Groq API key is read server-side from the environment, so no auth header is needed from the client.\n\nNotes:\n- /v1/extract and /v1/agent require a Groq model that supports structured outputs / tool calling. If the default model rejects them, set LLM_MODEL to a tool-capable model.\n- /v1/rag/* require embeddings: default is a local Ollama server (nomic-embed-text). Run `ollama pull nomic-embed-text` first, or point EMBED_BASE_URL/EMBED_API_KEY at a cloud embeddings endpoint.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -22,7 +22,7 @@
           "host": ["{{baseUrl}}"],
           "path": [""]
         },
-        "description": "Returns service name, provider, model, and the list of endpoints."
+        "description": "Returns service name, provider, model, feature flags (rag_enabled, agent_enabled), and the list of endpoints."
       },
       "response": []
     },
@@ -45,10 +45,7 @@
       "request": {
         "method": "POST",
         "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
+          { "key": "Content-Type", "value": "application/json" }
         ],
         "body": {
           "mode": "raw",
@@ -59,7 +56,7 @@
           "host": ["{{baseUrl}}"],
           "path": ["v1", "chat"]
         },
-        "description": "Blocking chat completion. Returns a single JSON object with `content`, `model`, and `usage`.\n\nOptional fields: `model` (override the server default), `temperature`, `max_tokens`."
+        "description": "Blocking chat completion. Returns a single JSON object with `content`, `model`, and `usage`.\n\nOptional fields: `model` (override server default), `temperature`, `max_tokens`."
       },
       "response": []
     },
@@ -68,10 +65,7 @@
       "request": {
         "method": "POST",
         "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
+          { "key": "Content-Type", "value": "application/json" }
         ],
         "body": {
           "mode": "raw",
@@ -91,10 +85,7 @@
       "request": {
         "method": "POST",
         "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
+          { "key": "Content-Type", "value": "application/json" }
         ],
         "body": {
           "mode": "raw",
@@ -105,7 +96,107 @@
           "host": ["{{baseUrl}}"],
           "path": ["v1", "chat", "stream"]
         },
-        "description": "Streamed completion. The response is plain text (text/plain), sent as chunks as the model generates tokens. Postman shows the full body once the stream ends; use curl -N to watch tokens arrive live."
+        "description": "Streamed completion. Response is plain text sent as chunks. Postman shows the full body once the stream ends; use `curl -N` to watch tokens arrive live."
+      },
+      "response": []
+    },
+    {
+      "name": "Extract (structured output)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"text\": \"Kirim 500 ribu ke Budi lewat BI-FAST\",\n  \"schema_name\": \"transfer\",\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"amount\":    { \"type\": \"integer\" },\n      \"recipient\": { \"type\": \"string\" },\n      \"method\":    { \"type\": \"string\" }\n    },\n    \"required\": [\"amount\", \"recipient\"]\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/extract",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "extract"]
+        },
+        "description": "Phase 1 — structured output. Turns free text into JSON constrained by your JSON Schema (via response_format=json_schema), so the result is valid by construction — no regex/repair.\n\nRequest fields:\n- text (required): the input to extract from\n- schema (required): a JSON Schema object the output must conform to\n- schema_name (optional): a name for the schema (default \"extraction\")\n- instruction (optional): extra system instruction\n\nResponse: {\"data\": <valid JSON>, \"model\": ..., \"usage\": {...}}. Requires a tool/JSON-capable Groq model."
+      },
+      "response": []
+    },
+    {
+      "name": "RAG - ingest document",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"source\": \"kebijakan-pembayaran\",\n  \"text\": \"Limit transfer QRIS harian adalah 20 juta rupiah per pengguna. Biaya admin gratis untuk merchant kategori UMI. Transfer BI-FAST maksimal 250 juta per transaksi.\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/rag/ingest",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "rag", "ingest"]
+        },
+        "description": "Phase 2 — RAG ingest. Chunks the text, embeds each chunk, and stores it under `source`.\n\nRequest fields: source (required), text (required).\nResponse: {\"source\": ..., \"chunks\": N}.\n\nRequires embeddings: default local Ollama (`ollama pull nomic-embed-text`) or a cloud embeddings endpoint via EMBED_BASE_URL/EMBED_API_KEY."
+      },
+      "response": []
+    },
+    {
+      "name": "RAG - query (grounded answer)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"berapa limit transfer QRIS harian?\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/rag/query",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "rag", "query"]
+        },
+        "description": "Phase 2 — RAG query. Embeds the question, retrieves the most relevant chunks, and answers grounded in them (with citations).\n\nRequest fields: question (required), temperature (optional).\nResponse: {\"answer\": ..., \"sources\": [{source, score, excerpt}], \"model\": ..., \"usage\": {...}}.\n\nTip: ask something NOT in the ingested docs — the answer should say it doesn't know (anti-hallucination)."
+      },
+      "response": []
+    },
+    {
+      "name": "Agent (tool-calling)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"task\": \"Berapa 240 dikali 3? Jelaskan singkat hasilnya.\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/agent",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "agent"]
+        },
+        "description": "Phase 3 — tool-calling agent (ReAct loop). The model may call registered tools: `calculator` and (when RAG is enabled) `knowledge_lookup`.\n\nRequest fields: task (required).\nResponse: {\"answer\": ..., \"steps\": [{tool, args, result}]}.\n\nGuardrails: only registered tools run; max 5 steps. Requires a tool-calling-capable Groq model (set LLM_MODEL if the default rejects tools)."
+      },
+      "response": []
+    },
+    {
+      "name": "Agent - RAG-backed lookup",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"task\": \"Cek dari knowledge base berapa limit QRIS harian, lalu hitung totalnya untuk 3 hari.\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/agent",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "agent"]
+        },
+        "description": "Demonstrates the agent orchestrating MULTIPLE tools: knowledge_lookup (RAG) to fetch the daily limit, then calculator to multiply. Ingest the payment-policy doc first (see 'RAG - ingest document'). Response `steps` shows each tool call in order."
       },
       "response": []
     },
@@ -114,10 +205,7 @@
       "request": {
         "method": "POST",
         "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
+          { "key": "Content-Type", "value": "application/json" }
         ],
         "body": {
           "mode": "raw",

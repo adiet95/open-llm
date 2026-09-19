@@ -68,10 +68,52 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 	}
 
 	return &ChatResponse{
-		Content: wire.Choices[0].Message.Content,
-		Model:   wire.Model,
-		Usage:   wire.Usage,
+		Content:   wire.Choices[0].Message.Content,
+		Model:     wire.Model,
+		Usage:     wire.Usage,
+		ToolCalls: wire.Choices[0].Message.ToolCalls,
 	}, nil
+}
+
+// Extract performs a structured-output completion: it asks the model to return
+// JSON conforming to the given JSON Schema and returns the raw JSON bytes.
+//
+// This is the Phase 1 alternative to fragile "ask for JSON in the prompt then
+// repair it" parsing: the provider constrains generation to the schema, so the
+// result is valid JSON by construction. The caller unmarshals it into their
+// own struct. instruction is an optional extra system instruction.
+func (c *Client) Extract(ctx context.Context, text, schemaName string, schema map[string]any, instruction string) (json.RawMessage, *ChatResponse, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, nil, fmt.Errorf("extract: input text is empty")
+	}
+	if len(schema) == 0 {
+		return nil, nil, fmt.Errorf("extract: schema is empty")
+	}
+
+	sys := "You extract structured data. Return ONLY a JSON object matching the schema. " +
+		"Do not add commentary. If a field is unknown, omit it or use null."
+	if instruction != "" {
+		sys = sys + " " + instruction
+	}
+
+	resp, err := c.Chat(ctx, ChatRequest{
+		Messages: []Message{
+			{Role: RoleSystem, Content: sys},
+			{Role: RoleUser, Content: text},
+		},
+		ResponseFormat: NewJSONSchemaFormat(schemaName, schema),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	raw := json.RawMessage(strings.TrimSpace(resp.Content))
+	// Validate it really is JSON. With strict json_schema this should always
+	// hold; checking makes a non-conforming provider fail loudly, not silently.
+	if !json.Valid(raw) {
+		return nil, resp, fmt.Errorf("extract: model returned invalid JSON: %q", resp.Content)
+	}
+	return raw, resp, nil
 }
 
 // ChatStream performs a streaming chat completion, invoking onChunk for each
@@ -140,11 +182,13 @@ func (c *Client) do(ctx context.Context, req ChatRequest) (*http.Response, error
 	}
 
 	payload := wireRequest{
-		Model:       model,
-		Messages:    req.Messages,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
-		Stream:      req.Stream,
+		Model:          model,
+		Messages:       req.Messages,
+		Temperature:    req.Temperature,
+		MaxTokens:      req.MaxTokens,
+		Stream:         req.Stream,
+		ResponseFormat: req.ResponseFormat,
+		Tools:          req.Tools,
 	}
 	buf, err := json.Marshal(payload)
 	if err != nil {

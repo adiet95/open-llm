@@ -2,6 +2,8 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -84,5 +86,63 @@ func TestChatStream(t *testing.T) {
 	}
 	if got.String() != "Hello!" {
 		t.Errorf("streamed content = %q, want %q", got.String(), "Hello!")
+	}
+}
+
+
+func TestExtract(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		// Model returns a valid JSON object as its content (structured output).
+		_, _ = w.Write([]byte(`{
+			"model": "test-model",
+			"choices": [{"message": {"content": "{\"amount\":500000,\"recipient\":\"Budi\"}"}}]
+		}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "k", "test-model", srv.Client())
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"amount":    map[string]any{"type": "integer"},
+			"recipient": map[string]any{"type": "string"},
+		},
+		"required": []string{"amount", "recipient"},
+	}
+
+	raw, resp, err := c.Extract(context.Background(), "Kirim 500000 ke Budi", "transfer", schema, "")
+	if err != nil {
+		t.Fatalf("Extract returned error: %v", err)
+	}
+	if resp.Model != "test-model" {
+		t.Errorf("model = %q, want test-model", resp.Model)
+	}
+
+	// The request must carry a response_format (structured output).
+	if _, ok := gotBody["response_format"]; !ok {
+		t.Error("request did not include response_format")
+	}
+
+	// The returned bytes must be valid JSON we can unmarshal into our shape.
+	var out struct {
+		Amount    int    `json:"amount"`
+		Recipient string `json:"recipient"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("returned data is not valid JSON: %v", err)
+	}
+	if out.Amount != 500000 || out.Recipient != "Budi" {
+		t.Errorf("parsed = %+v, want {500000 Budi}", out)
+	}
+}
+
+func TestExtractRejectsEmptySchema(t *testing.T) {
+	c := NewClient("http://unused", "", "m", nil)
+	if _, _, err := c.Extract(context.Background(), "text", "n", nil, ""); err == nil {
+		t.Fatal("expected error for empty schema")
 	}
 }
