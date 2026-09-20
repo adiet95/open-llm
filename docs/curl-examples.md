@@ -261,7 +261,43 @@ curl -s "$BASE/v1/agent" \
 
 ---
 
-## 10. Validation error (empty messages) — `POST /v1/chat`
+## 10. Research (multi-agent orchestrator) — `POST /v1/research`
+
+Phase 5. Decomposes a goal into subtasks (planner), answers each concurrently
+(workers, bounded), then merges them into one answer (synthesizer).
+
+**bash**
+```bash
+curl -s "$BASE/v1/research" \
+  -H "Content-Type: application/json" \
+  -d '{"goal": "Bandingkan BI-FAST, QRIS, dan RTGS untuk transfer antar-bank di Indonesia."}'
+```
+
+**PowerShell**
+```powershell
+curl.exe -s "$BASE/v1/research" -H "Content-Type: application/json" -d "{\"goal\":\"Bandingkan BI-FAST, QRIS, dan RTGS untuk transfer antar-bank di Indonesia.\"}"
+```
+
+Expected shape:
+```json
+{
+  "goal": "Bandingkan BI-FAST, QRIS, dan RTGS ...",
+  "subtasks": ["Apa itu BI-FAST dan batas nominalnya?", "..."],
+  "findings": [
+    { "task": "Apa itu BI-FAST ...", "answer": "..." },
+    { "task": "...", "answer": "...", "error": "..." }
+  ],
+  "answer": "Ringkasan terpadu ketiga metode ..."
+}
+```
+
+> Guardrails: planner dibatasi maksimal 5 subtask; worker jalan paralel dengan
+> concurrency maksimal 3. Subtask yang gagal muncul di `findings[].error` dan
+> dicatat sebagai gap oleh synthesizer (tidak menggagalkan seluruh request).
+
+---
+
+## 11. Validation error (empty messages) — `POST /v1/chat`
 
 Shows the 400 path.
 

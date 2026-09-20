@@ -12,6 +12,7 @@ tested feature:
 | **2** | RAG — chunk + embed + retrieve, with citations | `/v1/rag/ingest`, `/v1/rag/query` |
 | **3** | Tool-calling agent (ReAct loop) | `/v1/agent` |
 | **4** | Production — eval harness + request metrics | `internal/eval`, metrics middleware |
+| **5** | Multi-agent research — planner → parallel workers → synthesizer | `/v1/research` |
 
 - **LLM provider:** [Groq](https://groq.com) — free tier, fast, OpenAI-compatible
 - **Embeddings (RAG):** local [Ollama](https://ollama.com) by default (free), or any OpenAI-compatible embeddings endpoint
@@ -30,6 +31,7 @@ internal/config/         # env-based configuration (no hard-coded secrets) + .en
 internal/llm/            # OpenAI-compatible client: Chat, ChatStream, Extract (+ tool types)
 internal/rag/            # RAG pipeline: chunk, embed, cosine vector store, service
 internal/agent/          # ReAct tool-calling loop with guardrails (allow-list, step limit)
+internal/orchestrator/   # multi-agent research: planner -> parallel workers -> synthesizer
 internal/eval/           # evaluation harness: run a labelled dataset, score, report accuracy
 internal/httpapi/        # HTTP handlers + metrics middleware
 docs/                    # Postman collection + curl examples
@@ -75,6 +77,7 @@ curl -s localhost:8080/v1/chat -d '{"messages":[{"role":"user","content":"Explai
 | `POST /v1/rag/ingest` | **RAG** — add a document: chunk → embed → store |
 | `POST /v1/rag/query` | **RAG** — answer a question grounded in ingested docs, with citations |
 | `POST /v1/agent` | **Tool-calling agent** — ReAct loop over `calculator` + `knowledge_lookup` |
+| `POST /v1/research` | **Multi-agent research** — planner → parallel workers → synthesizer |
 
 > `/v1/extract` and `/v1/agent` need a Groq model that supports structured
 > outputs / tool calling — set `LLM_MODEL` if the default rejects them.
@@ -113,6 +116,14 @@ POST /v1/rag/query
 POST /v1/agent
 { "task": "Berapa 240 dikali 3? Jelaskan singkat." }
 → { "answer": "240 dikali 3 adalah 720.", "steps": [{"tool":"calculator","args":"{\"a\":240,\"b\":3,\"op\":\"*\"}","result":"720"}] }
+```
+
+**Research (Phase 5)** — planner splits the goal, workers run in parallel, synthesizer merges:
+```json
+POST /v1/research
+{ "goal": "Bandingkan BI-FAST, QRIS, dan RTGS untuk transfer antar-bank." }
+→ { "goal": "...", "subtasks": ["...","..."],
+    "findings": [{"task":"...","answer":"..."}], "answer": "Ringkasan terpadu ..." }
 ```
 
 ---
@@ -195,5 +206,5 @@ The `Dockerfile` is portable — same image on **Fly.io** (`fly launch`),
   interface — for larger corpora.
 - **File ingest** (PDF/markdown) for RAG.
 - **Guardrails** — prompt-injection detection + PII redaction (Phase 4).
-- **Multi-agent** orchestrator (planner/worker/synthesizer) — Phase 5, only when
-  a use-case truly needs independent roles.
+- **Multi-agent** orchestrator (planner/worker/synthesizer) — **done** (Phase 5,
+  `/v1/research`). Next: give workers tool access (RAG/web) instead of plain chat.

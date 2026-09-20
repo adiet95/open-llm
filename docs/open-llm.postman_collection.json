@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "open-llm",
-    "description": "HTTP service for open-source LLMs on Groq (OpenAI-compatible), with structured output, RAG, and a tool-calling agent.\n\nEndpoints:\n- GET  /                 service info (provider, model, enabled features, endpoints)\n- GET  /health           liveness probe\n- POST /v1/chat          blocking chat completion (JSON)\n- POST /v1/chat/stream   streamed completion (chunked text)\n- POST /v1/extract       structured output — text -> JSON constrained by a JSON Schema (Phase 1)\n- POST /v1/rag/ingest    add a document to the knowledge base: chunk -> embed -> store (Phase 2)\n- POST /v1/rag/query     answer a question grounded in the ingested docs, with citations (Phase 2)\n- POST /v1/agent         tool-calling agent loop (ReAct): calculator + knowledge_lookup (Phase 3)\n\nSet the `baseUrl` variable (defaults to http://localhost:8080). The Groq API key is read server-side from the environment, so no auth header is needed from the client.\n\nNotes:\n- /v1/extract and /v1/agent require a Groq model that supports structured outputs / tool calling. If the default model rejects them, set LLM_MODEL to a tool-capable model.\n- /v1/rag/* require embeddings: default is a local Ollama server (nomic-embed-text). Run `ollama pull nomic-embed-text` first, or point EMBED_BASE_URL/EMBED_API_KEY at a cloud embeddings endpoint.",
+    "description": "HTTP service for open-source LLMs on Groq (OpenAI-compatible), with structured output, RAG, and a tool-calling agent.\n\nEndpoints:\n- GET  /                 service info (provider, model, enabled features, endpoints)\n- GET  /health           liveness probe\n- POST /v1/chat          blocking chat completion (JSON)\n- POST /v1/chat/stream   streamed completion (chunked text)\n- POST /v1/extract       structured output — text -> JSON constrained by a JSON Schema (Phase 1)\n- POST /v1/rag/ingest    add a document to the knowledge base: chunk -> embed -> store (Phase 2)\n- POST /v1/rag/query     answer a question grounded in the ingested docs, with citations (Phase 2)\n- POST /v1/agent         tool-calling agent loop (ReAct): calculator + knowledge_lookup (Phase 3)\n- POST /v1/research      multi-agent research: planner -> parallel workers -> synthesizer (Phase 5)\n\nSet the `baseUrl` variable (defaults to http://localhost:8080). The Groq API key is read server-side from the environment, so no auth header is needed from the client.\n\nNotes:\n- /v1/extract and /v1/agent require a Groq model that supports structured outputs / tool calling. If the default model rejects them, set LLM_MODEL to a tool-capable model.\n- /v1/rag/* require embeddings: default is a local Ollama server (nomic-embed-text). Run `ollama pull nomic-embed-text` first, or point EMBED_BASE_URL/EMBED_API_KEY at a cloud embeddings endpoint.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -197,6 +197,26 @@
           "path": ["v1", "agent"]
         },
         "description": "Demonstrates the agent orchestrating MULTIPLE tools: knowledge_lookup (RAG) to fetch the daily limit, then calculator to multiply. Ingest the payment-policy doc first (see 'RAG - ingest document'). Response `steps` shows each tool call in order."
+      },
+      "response": []
+    },
+    {
+      "name": "Research (multi-agent orchestrator)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"goal\": \"Bandingkan BI-FAST, QRIS, dan RTGS untuk transfer antar-bank di Indonesia.\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/v1/research",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "research"]
+        },
+        "description": "Phase 5 — multi-agent research orchestrator: planner -> parallel workers -> synthesizer. Decomposes `goal` into subtasks, answers each concurrently, then merges into one answer.\n\nRequest fields: goal (required).\nResponse: {\"goal\": ..., \"subtasks\": [...], \"findings\": [{task, answer, error?}], \"answer\": ...}.\n\nGuardrails: planner capped at 5 subtasks; worker concurrency capped at 3. A failed subtask appears in findings[].error and is noted as a gap by the synthesizer (does not fail the whole request)."
       },
       "response": []
     },
